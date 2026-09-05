@@ -1,11 +1,4 @@
 {
- "^KS200": {
-  "osc_zone": "bear",
-  "rsi_zone": "bull",
-  "direction": "중립",
-  "confirmed": "매수",
-  "last_date": "2026-07-17"
- },
  "^GSPC": {
   "osc_zone": "bull",
   "rsi_zone": "bull",

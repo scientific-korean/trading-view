@@ -5,7 +5,7 @@
   3) state.json 이월
   4) 텔레그램 발송 + docs/index.html 생성
 """
-import os, sys, json, datetime as dt
+import os, sys, json, unicodedata, datetime as dt
 import yaml
 from dotenv import load_dotenv
 
@@ -25,6 +25,37 @@ from core.chart import build_html
 
 STATE = "state.json"
 OUT = "docs/index.html"
+
+# 텔레그램 <pre>(고정폭 글꼴) 메시지의 컬럼이 안 맞는 문제 수정용(2026-09).
+# 한글(및 기타 동아시아 문자)은 고정폭 글꼴에서 폭 2로 그려지는데, 파이썬의
+# f"{s:<12}" 같은 정렬은 "문자 개수" 기준이라 한글 비중이 다른 두 문자열을
+# 나란히 두면 화면상 폭이 서로 달라져 줄이 어긋난다. unicodedata의
+# East Asian Width 속성(W/F = 폭 2, 그 외 = 폭 1)으로 "화면상 폭"을 직접
+# 계산해서 자르고/채운다. NAME_W=14, LABEL_W=15는 현재 config.yaml의
+# 종목명·상태라벨 중 가장 넓은 것("마이크로소프트"/"버크셔해서웨이"=14,
+# "중립(직전 매수)" 류=15) 기준이며, 나중에 이보다 긴 이름이 추가되면
+# 잘려서 표시된다(줄 자체는 안 깨짐).
+NAME_W, LABEL_W = 14, 15
+
+
+def _vwidth(ch: str) -> int:
+    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+def _vtrunc(s: str, width: int) -> str:
+    out, w = "", 0
+    for ch in s:
+        cw = _vwidth(ch)
+        if w + cw > width:
+            break
+        out += ch
+        w += cw
+    return out
+
+
+def _vpad(s: str, width: int) -> str:
+    s = _vtrunc(s, width)
+    return s + " " * max(0, width - sum(_vwidth(c) for c in s))
 
 
 def main(cfg_path="config.yaml", no_cache=True):
@@ -61,7 +92,9 @@ def main(cfg_path="config.yaml", no_cache=True):
             mark = "◆" if dec["changed"] else ("·" if dec["neutral_edge"] else " ")
             warn = " ⚠" if dec["flags"]["vol_warning"] else ""
             fmt = lambda v, d=2: f"{v:.{d}f}" if v is not None else "—"
-            lines.append(f"{mark}{e['name'][:12]:<12} {lbl:<12} "
+            # 문자 개수 기준 정렬([:12]/:<12)은 한글·영문 혼용 시 텔레그램
+            # 고정폭 렌더링에서 줄이 어긋난다 — 화면폭 기준 _vpad로 교체.
+            lines.append(f"{mark}{_vpad(e['name'], NAME_W)} {_vpad(lbl, LABEL_W)} "
                          f"RSI {fmt(dec['rsi'],1)} OSC {fmt(dec['osc_line'],3)}{warn}")
         except Exception as ex:
             errs.append(f"{e['name']}: {ex}")
