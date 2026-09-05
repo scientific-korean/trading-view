@@ -95,7 +95,6 @@ def main(cfg_path="config.yaml", no_cache=True):
                     c = {"매수": "상승", "매도": "하락"}[c]
                 lbl = f"중립(직전 {c})"
             mark = "◆" if dec["changed"] else ("·" if dec["neutral_edge"] else " ")
-            warn = " ⚠" if dec["flags"]["vol_warning"] else ""
             fmt = lambda v, d=2: f"{v:.{d}f}" if v is not None else "—"
             # OSC 컬럼: 예전엔 osc_line(PPO/MACD 원값)을 보여줬는데, 실제 매수/매도
             # 판정에 쓰이는 값은 히스토그램(osc_hist, hist_upper/lower와 비교되는 값)이라
@@ -104,12 +103,21 @@ def main(cfg_path="config.yaml", no_cache=True):
             #
             # 1줄에 종목명+상태+RSI+OSC를 다 넣으면(문자폭 기준으로 정렬해도) 모바일
             # 화면 폭을 넘어서서 중간에 줄바꿈이 일어나 정렬이 오히려 더 깨졌다(2026-09
-            # 제보). 종목명+상태를 1번째 줄, RSI/OSC를 들여쓴 2번째 줄로 나눠 각 줄
-            # 길이를 줄인다 — 종목명/상태는 한글 위주라 화면폭 기준 _vpad, RSI/OSC는
+            # 제보). 종목명+상태를 1번째 줄, OSC/RSI를 들여쓴 2번째 줄로 나눠 각 줄
+            # 길이를 줄인다 — 종목명/상태는 한글 위주라 화면폭 기준 _vpad, OSC/RSI는
             # 숫자·기호뿐이라(ASCII는 폭이 항상 1이라 문자 개수 정렬로 충분) 그냥
-            # :>width로 정렬한다.
+            # :>width로 정렬한다. 2번째 줄 들여쓰기는 1번째 줄 라벨이 시작하는 칸
+            # (마크 1 + 종목명 NAME_W + 공백 1)에 맞춰서 상세줄이 라벨 아래에
+            # 매달린 것처럼 보이게 한다 — 너무 깊게 들여쓰면 모바일에서 다시
+            # 줄바꿈이 날 수 있어(2026-09 교훈) 이 정도(16칸)로 제한.
+            #
+            # BB width 변동성 경고(⚠)는 텔레그램 메시지에서는 뺐다(2026-09, 사용자
+            # 요청 — 정보가 늘어나 복잡해짐). 대시보드 차트의 BB width 패널에는
+            # 계속 표시되므로 정보 자체가 없어지는 건 아니다.
+            DETAIL_INDENT = " " * (1 + NAME_W + 1)
             name_line = f"{mark}{_vpad(e['name'], NAME_W)} {_vtrunc(lbl, LABEL_W)}"
-            detail_line = f"   RSI {fmt(dec['rsi'],1):>5} OSC {fmt(dec['osc_hist'],3):>7}{warn}"
+            detail_line = (f"{DETAIL_INDENT}OSC {fmt(dec['osc_hist'],3):>7} "
+                           f"/ RSI {fmt(dec['rsi'],1):>5}")
             lines.append(name_line + "\n" + detail_line)
         except Exception as ex:
             errs.append(f"{e['name']}: {ex}")
