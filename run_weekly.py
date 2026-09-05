@@ -74,6 +74,18 @@ def main(cfg_path="config.yaml", no_cache=True):
         asof = max(set(dates), key=dates.count).isoformat()
     else:
         asof = str(dt.date.today())
+
+    # config.yaml에서 완전히 빠진 티커의 옛 state는 정리한다(2026-09: ^KS200→^KS11
+    # 교체 후에도 "^KS200" 항목이 state.json에 계속 남아있던 문제). 이번 실행에서
+    # 일시적으로 fetch가 실패한 티커(여전히 유니버스엔 있음)는 여기 안 걸리므로
+    # 그 상태는 그대로 보존된다 — 유니버스에서 아예 제거된 티커만 지워진다.
+    current_tickers = {e["ticker"] for e in cfg["universe"]}
+    stale = set(states) - current_tickers
+    if stale:
+        # 오류가 아니라 정리 로그라 텔레그램 메시지(errs)엔 안 넣고 콘솔/CI 로그에만 남긴다.
+        print(f"[정리] state.json: 유니버스에 없는 옛 항목 제거 → {sorted(stale)}")
+    states = {k: v for k, v in states.items() if k in current_tickers}
+
     json.dump(states, open(STATE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
     os.makedirs("docs", exist_ok=True)
