@@ -1,0 +1,84 @@
+# =============================================================
+#  관심 종목 모니터 - 설정 파일
+#  kind: price = PPO 사용 / rate = MACD 원값 사용(bp)
+# =============================================================
+
+params:
+  # PPO / MACD
+  fast: 19
+  slow: 39
+  signal: 14
+
+  # RSI
+  rsi_period: 14
+  rsi_upper: 52        # 이 위로 올라가면 강세 존 전환 (기존 55 → 52, 매도지연 단축 목적)
+  rsi_lower: 48        # 이 아래로 내려가면 약세 존 전환 (기존 45 → 48)
+
+  # 볼린저
+  bb_period: 20
+  bb_std: 2.0
+  # BB width 변동성 경고: 절대 임계치 대신, 자산 자신의 최근 bb_width_window_weeks
+  # 분포 안에서 백분위로 판정 (2026-09 변경). 종목마다 BB width 스케일이 워낙
+  # 달라(브렌트유 0.47 vs 원/달러 0.15 등) 절대값 하나로는 형평이 안 맞았고,
+  # 실제로 옛 절대 임계치(0.8)는 대부분 종목에서 거의 발동하지 않았다.
+  # price/rate 스케일 차이도 이 방식이면 자동으로 흡수돼 kind별로 나눌 필요가 없다.
+  bb_width_window_weeks: 260   # 백분위 계산에 쓸 최근 기간 (약 5년)
+  bb_width_warn_percentile: 95 # 이 백분위 이상이면 변동성 경고 (매매엔 개입 안 함)
+
+  # 방향 존 히스테리시스 (히스토그램 기준, PPO 단위 %)
+  hist_upper: 0.0
+  hist_lower: 0.0
+
+  # 세기 판정
+  slope_window: 3      # 기울기 평균 봉 수
+
+# 세기 3단계(강/중/약)는 실데이터 워크포워드 검증 결과 무작위와
+# 구분되지 않아(단조성 충족 14%, 무작위 기대 16.7%) 폐기했다.
+# 방향(매수/매도/중립)은 fast/slow/signal/RSI 임계값으로만 정해지는
+# 순수 규칙 기반이라 데이터로 학습하는 값이 없다 — 캘리브레이션 불필요.
+
+universe:
+  # ---------- 지수 ----------
+  - {ticker: "^KS11",     name: "코스피",         kind: price, group: 지수}
+  - {ticker: "^GSPC",     name: "S&P500",         kind: price, group: 지수}
+  - {ticker: "^NDX",      name: "나스닥100",      kind: price, group: 지수}
+  - {ticker: "^N225",     name: "니케이225",      kind: price, group: 지수}
+  - {ticker: "000001.SS", name: "상하이종합",     kind: price, group: 지수}
+  - {ticker: "^HSI",      name: "항셍지수",       kind: price, group: 지수}
+  - {ticker: "^TWII",     name: "가권지수",       kind: price, group: 지수}
+  - {ticker: "^STOXX50E", name: "유로스톡스50",   kind: price, group: 지수}
+
+  # ---------- 환율 ----------
+  - {ticker: "USDKRW=X",  name: "원/달러",        kind: price, group: 환율}
+  - {ticker: "EURKRW=X",  name: "원/유로",        kind: price, group: 환율}
+  - {ticker: "JPYKRW_SYN", name: "원/엔(100엔)",  kind: price, group: 환율,
+     synthetic: {op: divide, num: "USDKRW=X", den: "USDJPY=X", scale: 100}}
+
+  # ---------- 원자재 ----------
+  - {ticker: "GC=F",      name: "금",             kind: price, group: 원자재}
+  - {ticker: "HG=F",      name: "구리",           kind: price, group: 원자재}
+  - {ticker: "BZ=F",      name: "브렌트유",       kind: price, group: 원자재}
+
+  # ---------- 금리 ----------
+  - {ticker: "^TNX",      name: "미국국채10년",   kind: rate,  group: 금리, source: yahoo}
+  - {ticker: "KR10Y",     name: "한국국채10년",   kind: rate,  group: 금리, source: ecos}
+  - {ticker: "JP10Y",     name: "일본국채10년",   kind: rate,  group: 금리, source: mof_jp}
+
+  # ---------- 개별종목 ----------
+  - {ticker: "NVDA",  name: "엔비디아",      kind: price, group: 개별}
+  - {ticker: "AAPL",  name: "애플",          kind: price, group: 개별}
+  - {ticker: "GOOGL", name: "알파벳",        kind: price, group: 개별}
+  - {ticker: "MSFT",  name: "마이크로소프트", kind: price, group: 개별}
+  - {ticker: "AMZN",  name: "아마존",        kind: price, group: 개별}
+  - {ticker: "TSM",   name: "TSMC",          kind: price, group: 개별}
+  - {ticker: "AVGO",  name: "브로드컴",      kind: price, group: 개별}
+  - {ticker: "META",  name: "메타",          kind: price, group: 개별}
+  - {ticker: "TSLA",  name: "테슬라",        kind: price, group: 개별}
+  - {ticker: "LLY",   name: "일라이릴리",    kind: price, group: 개별}
+  - {ticker: "BRK-B", name: "버크셔해서웨이", kind: price, group: 개별}
+
+data:
+  start: "2005-01-01"
+  cache_dir: "cache"
+  ecos_stat_code: "817Y002"      # 시장금리(일별)
+  ecos_item_code: "010210000"    # 국고채(10년)

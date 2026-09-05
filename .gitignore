@@ -1,0 +1,8 @@
+cache/
+__pycache__/
+*.pyc
+venv/
+.venv/
+param_sensitivity_results.json
+decompose_results.json
+.env

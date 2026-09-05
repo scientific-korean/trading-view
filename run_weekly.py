@@ -1,0 +1,107 @@
+"""
+매주 금요일 종가 후 실행.
+  1) 데이터 수집 → 주봉 (미완성 주 제외)
+  2) 지표 계산 → generate_signal 호출
+  3) state.json 이월
+  4) 텔레그램 발송 + docs/index.html 생성
+"""
+import os, sys, json, datetime as dt
+import yaml
+from dotenv import load_dotenv
+
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _ROOT)
+
+# 로컬 실행용 .env 로드 (TG_TOKEN/TG_CHAT_ID/ECOS_API_KEY). 파일이 없으면 조용히
+# 넘어가고 기존 OS 환경변수를 그대로 쓴다 — GitHub Actions에서는 .env가 없고
+# secrets가 이미 os.environ에 들어있으므로 이 줄은 아무 영향 없음.
+# 이미 설정된 OS 환경변수를 .env 값이 덮어쓰지 않도록 override=False(기본값) 유지.
+load_dotenv(os.path.join(_ROOT, ".env"))
+
+from core import data as D
+from core.indicators import enrich
+from core.signals import generate_signal
+from core.chart import build_html
+
+STATE = "state.json"
+OUT = "docs/index.html"
+
+
+def main(cfg_path="config.yaml", no_cache=True):
+    cfg = yaml.safe_load(open(cfg_path, encoding="utf-8"))
+    p = dict(cfg["params"])
+    states = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
+
+    payload, lines, errs = [], [], []
+    for e in cfg["universe"]:
+        try:
+            wk = D.load(e, cfg, use_cache=not no_cache)
+            df = enrich(wk, p, e["kind"])
+            prev = states.get(e["ticker"])
+
+            if not prev:
+                # 콜드스타트: 직전 봉까지 히스토리를 순차 재생해 state 복원.
+                # 없으면 최초 실행 시 전 종목이 '관망'으로 뜬다.
+                from core.engine import run_signals
+                _, prev = run_signals(df.iloc[:-1], p, {"kind": e["kind"], **e},
+                                      return_state=True)
+
+            dec, st = generate_signal(df, prev, p, {"kind": e["kind"], **e})
+            states[e["ticker"]] = st
+            payload.append((e, df, dec))
+
+            lbl = dec["direction"]
+            if e["kind"] == "rate":
+                lbl = {"매수": "상승", "매도": "하락"}.get(lbl, lbl)
+            if dec["direction"] == "중립" and dec["confirmed"]:
+                c = dec["confirmed"]
+                if e["kind"] == "rate":
+                    c = {"매수": "상승", "매도": "하락"}[c]
+                lbl = f"중립(직전 {c})"
+            mark = "◆" if dec["changed"] else ("·" if dec["neutral_edge"] else " ")
+            warn = " ⚠" if dec["flags"]["vol_warning"] else ""
+            fmt = lambda v, d=2: f"{v:.{d}f}" if v is not None else "—"
+            lines.append(f"{mark}{e['name'][:12]:<12} {lbl:<12} "
+                         f"RSI {fmt(dec['rsi'],1)} OSC {fmt(dec['osc_line'],3)}{warn}")
+        except Exception as ex:
+            errs.append(f"{e['name']}: {ex}")
+
+    # payload[0](유니버스 첫 종목)의 날짜를 그대로 썼더니, 그 종목 하나만
+    # 데이터가 막혀도(2026-09 ^KS200 사례) 전체 리포트 날짜가 틀리게 찍혔다.
+    # 다수결(최빈값)로 바꿔서 소수 종목의 결측에 안 흔들리게 한다.
+    if payload:
+        dates = [df.index[-1].date() for _, df, _ in payload]
+        asof = max(set(dates), key=dates.count).isoformat()
+    else:
+        asof = str(dt.date.today())
+    json.dump(states, open(STATE, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+
+    os.makedirs("docs", exist_ok=True)
+    open(OUT, "w", encoding="utf-8").write(build_html(payload, p, asof))
+
+    changed = [l for l in lines if l.startswith("◆")]
+    msg = f"<b>주봉 신호 {asof}</b>\n"
+    msg += (f"\n<b>전환 {len(changed)}건</b>\n<pre>" + "\n".join(changed) + "</pre>\n"
+            if changed else "\n전환 없음\n")
+    msg += "\n<pre>" + "\n".join(lines) + "</pre>"
+    if errs:
+        msg += "\n<b>오류</b>\n<pre>" + "\n".join(errs) + "</pre>"
+
+    print(msg)
+    send(msg)
+    return 0
+
+
+def send(text: str):
+    tok, chat = os.environ.get("TG_TOKEN"), os.environ.get("TG_CHAT_ID")
+    if not (tok and chat):
+        print("[TG 미설정 - 발송 생략]"); return
+    import requests
+    r = requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
+                      json={"chat_id": chat, "text": text[:4000],
+                            "parse_mode": "HTML"}, timeout=20)
+    print("[TG]", r.status_code)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
