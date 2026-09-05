@@ -31,12 +31,16 @@ th{color:var(--dim);font-weight:500;font-size:11px}td:first-child,th:first-child
 .buy{color:var(--up);font-weight:600}.sell{color:var(--dn);font-weight:600}
 .hold{color:var(--dim)}.neu{color:var(--l1)}
 .chg{background:#2a1f14}.warn{color:var(--warn)}
-.card{margin:14px 16px;border:1px solid var(--grid);border-radius:10px;overflow:hidden}
+.card{margin:14px 16px;border:1px solid var(--grid);border-radius:10px;overflow:hidden;
+scroll-margin-top:92px}
 .hd{padding:10px 12px;background:#161a21;display:flex;justify-content:space-between;align-items:center}
 .hd b{font-size:14px}.hd span{font-size:11px;color:var(--dim)}
 svg{display:block;width:100%;height:auto}.rsn{padding:8px 12px;font-size:11px;color:var(--dim);
 border-top:1px solid var(--grid)}
 .tabs{display:none}.tabs.on{display:block}
+/* 모바일에서 요약 테이블 오른쪽 컬럼(기울기~종가)이 카드 overflow:hidden 에
+   잘려 아예 안 보이던 문제 — 테이블만 따로 가로 스크롤 가능한 래퍼로 감싼다. */
+.twrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 </style></head><body>
 <header><h1>주봉 신호 모니터</h1><div class="sub">기준일 __DATE__ · PPO(__F__,__S__,__G__) · RSI(__R__) 존 __RL__/__RU__ · AND 대칭</div></header>
 <div id="nav"></div><div id="root"></div>
@@ -58,18 +62,25 @@ function lblOf(r){
 
 function summary(g){
   const rs=D.rows.filter(r=>g==='전체'||r.group===g);
-  let h='<div class="card"><table><tr><th>종목</th><th>방향</th><th>RSI</th>'
+  // 모바일 폭에서 종목/방향만 보이고 RSI~종가가 카드 밖으로 잘려 안 보이던 문제 →
+  // 테이블을 가로 스크롤 가능한 .twrap 으로 감싼다(카드 자체의 overflow:hidden 은
+  // 모서리 둥글게 처리용이라 그대로 두고, 스크롤은 안쪽 래퍼가 담당).
+  // OSC 컬럼: 2026-09 이전엔 osc_line(PPO/MACD 원값)이 들어가 있어 실제 매수/매도
+  // 판정에 쓰이는 히스토그램(osc_hist, generate_signal의 hist_upper/lower 비교 대상)과
+  // 다른 값을 보여주고 있었다(예: S&P500 osc_line 3.658 vs 판정에 쓰인 osc_hist 0.190).
+  // RSI 컬럼처럼 "판정에 실제로 쓰인 값 그대로"를 보여주도록 osc_hist로 교체.
+  let h='<div class="card"><div class="twrap"><table><tr><th>종목</th><th>방향</th><th>RSI</th>'
    +'<th>OSC</th><th>기울기</th><th>BBW</th><th>종가</th></tr>';
   for(const r of rs){
     const cls=lblCls(r.direction), lbl=lblOf(r);
     h+=`<tr class="${r.changed?'chg':''}"><td><a href="#c_${r.id}" style="color:inherit">${esc(r.name)}</a>`
      +`${r.changed?' <span style="color:var(--l1)">◆</span>':(r.neutral_edge?' <span style="color:var(--dim)">·</span>':'')}</td>`
      +`<td class="${cls}">${lbl}</td><td>${f(r.rsi,1)}</td>`
-     +`<td>${f(r.osc_line,3)}</td><td>${f(r.osc_slope,4)}</td>`
+     +`<td>${f(r.osc_hist,3)}</td><td>${f(r.osc_slope,4)}</td>`
      +`<td class="${r.vol_warning?'warn':''}">${f(r.bb_width,r.kind==='rate'?1:3)}${r.vol_warning?' ⚠':''}</td>`
      +`<td>${r.close.toLocaleString(undefined,{maximumFractionDigits:2})}</td></tr>`;
   }
-  return h+'</table></div>';
+  return h+'</table></div></div>';
 }
 
 const W=760,PAD=44;
@@ -193,7 +204,7 @@ def build_html(payload: list, params: dict, asof: str, tail: int = 260) -> str:
             "direction": dec["direction"], "confirmed": dec["confirmed"],
             "changed": bool(dec["changed"]),
             "neutral_edge": bool(dec["neutral_edge"]), "reason": dec["reason"],
-            "rsi": dec["rsi"], "osc_line": dec["osc_line"],
+            "rsi": dec["rsi"], "osc_line": dec["osc_line"], "osc_hist": dec["osc_hist"],
             "osc_slope": dec["osc_slope"], "bb_width": dec["bb_width"],
             "vol_warning": dec["flags"]["vol_warning"],
             "close": float(df["close"].iloc[-1]),

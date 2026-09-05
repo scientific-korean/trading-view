@@ -31,10 +31,15 @@ OUT = "docs/index.html"
 # f"{s:<12}" 같은 정렬은 "문자 개수" 기준이라 한글 비중이 다른 두 문자열을
 # 나란히 두면 화면상 폭이 서로 달라져 줄이 어긋난다. unicodedata의
 # East Asian Width 속성(W/F = 폭 2, 그 외 = 폭 1)으로 "화면상 폭"을 직접
-# 계산해서 자르고/채운다. NAME_W=14, LABEL_W=15는 현재 config.yaml의
-# 종목명·상태라벨 중 가장 넓은 것("마이크로소프트"/"버크셔해서웨이"=14,
-# "중립(직전 매수)" 류=15) 기준이며, 나중에 이보다 긴 이름이 추가되면
-# 잘려서 표시된다(줄 자체는 안 깨짐).
+# 계산해서 자르고/채운다(_vpad/_vtrunc). NAME_W=14, LABEL_W=15는 현재
+# config.yaml의 종목명·상태라벨 중 가장 넓은 것("마이크로소프트"/
+# "버크셔해서웨이"=14, "중립(직전 매수)" 류=15) 기준이며, 나중에 이보다 긴
+# 이름이 추가되면 잘려서 표시된다(줄 자체는 안 깨짐).
+#
+# 화면폭 기준으로 맞춰도 종목명+상태+RSI+OSC를 한 줄에 다 넣으면 모바일
+# 화면 폭 자체를 넘어서서 중간에 줄바꿈이 일어나 오히려 더 지저분해진다
+# (2026-09 제보) — 그래서 아래 main()에서 종목당 2줄(이름+상태 / RSI+OSC)로
+# 나눠 각 줄 길이를 줄인다.
 NAME_W, LABEL_W = 14, 15
 
 
@@ -92,10 +97,20 @@ def main(cfg_path="config.yaml", no_cache=True):
             mark = "◆" if dec["changed"] else ("·" if dec["neutral_edge"] else " ")
             warn = " ⚠" if dec["flags"]["vol_warning"] else ""
             fmt = lambda v, d=2: f"{v:.{d}f}" if v is not None else "—"
-            # 문자 개수 기준 정렬([:12]/:<12)은 한글·영문 혼용 시 텔레그램
-            # 고정폭 렌더링에서 줄이 어긋난다 — 화면폭 기준 _vpad로 교체.
-            lines.append(f"{mark}{_vpad(e['name'], NAME_W)} {_vpad(lbl, LABEL_W)} "
-                         f"RSI {fmt(dec['rsi'],1)} OSC {fmt(dec['osc_line'],3)}{warn}")
+            # OSC 컬럼: 예전엔 osc_line(PPO/MACD 원값)을 보여줬는데, 실제 매수/매도
+            # 판정에 쓰이는 값은 히스토그램(osc_hist, hist_upper/lower와 비교되는 값)이라
+            # 서로 다른 숫자였다(예: osc_line 3.658 vs 판정에 쓰인 osc_hist 0.190).
+            # RSI처럼 "판정에 실제로 쓰인 값"을 그대로 보여주도록 osc_hist로 교체.
+            #
+            # 1줄에 종목명+상태+RSI+OSC를 다 넣으면(문자폭 기준으로 정렬해도) 모바일
+            # 화면 폭을 넘어서서 중간에 줄바꿈이 일어나 정렬이 오히려 더 깨졌다(2026-09
+            # 제보). 종목명+상태를 1번째 줄, RSI/OSC를 들여쓴 2번째 줄로 나눠 각 줄
+            # 길이를 줄인다 — 종목명/상태는 한글 위주라 화면폭 기준 _vpad, RSI/OSC는
+            # 숫자·기호뿐이라(ASCII는 폭이 항상 1이라 문자 개수 정렬로 충분) 그냥
+            # :>width로 정렬한다.
+            name_line = f"{mark}{_vpad(e['name'], NAME_W)} {_vtrunc(lbl, LABEL_W)}"
+            detail_line = f"   RSI {fmt(dec['rsi'],1):>5} OSC {fmt(dec['osc_hist'],3):>7}{warn}"
+            lines.append(name_line + "\n" + detail_line)
         except Exception as ex:
             errs.append(f"{e['name']}: {ex}")
 
