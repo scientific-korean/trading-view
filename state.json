@@ -4,175 +4,175 @@
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "^NDX": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "^N225": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "000001.SS": {
   "osc_zone": "bear",
   "rsi_zone": "bear",
   "direction": "매도",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "^HSI": {
   "osc_zone": "bear",
-  "rsi_zone": "bull",
-  "direction": "중립",
+  "rsi_zone": "bear",
+  "direction": "매도",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "^TWII": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "^STOXX50E": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "USDKRW=X": {
   "osc_zone": "bear",
   "rsi_zone": "bear",
   "direction": "매도",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "EURKRW=X": {
   "osc_zone": "bear",
   "rsi_zone": "bear",
   "direction": "매도",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "JPYKRW_SYN": {
   "osc_zone": "bear",
   "rsi_zone": "bear",
   "direction": "매도",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "GC=F": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "HG=F": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "BZ=F": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "^TNX": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "NVDA": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "AAPL": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "GOOGL": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "MSFT": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "AMZN": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "TSM": {
   "osc_zone": "bear",
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "AVGO": {
   "osc_zone": "bear",
   "rsi_zone": "bear",
   "direction": "매도",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "META": {
-  "osc_zone": "bear",
-  "rsi_zone": "bear",
-  "direction": "매도",
-  "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "osc_zone": "bull",
+  "rsi_zone": "bull",
+  "direction": "매수",
+  "confirmed": "매수",
+  "last_date": "2026-09-11"
  },
  "TSLA": {
   "osc_zone": "bear",
   "rsi_zone": "bear",
   "direction": "매도",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "LLY": {
-  "osc_zone": "bull",
+  "osc_zone": "bear",
   "rsi_zone": "bull",
-  "direction": "매수",
+  "direction": "중립",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "BRK-B": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "JP10Y": {
   "osc_zone": "bull",
@@ -186,13 +186,13 @@
   "rsi_zone": "bull",
   "direction": "중립",
   "confirmed": "매도",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  },
  "KR10Y": {
   "osc_zone": "bull",
   "rsi_zone": "bull",
   "direction": "매수",
   "confirmed": "매수",
-  "last_date": "2026-09-04"
+  "last_date": "2026-09-11"
  }
 }
