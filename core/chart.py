@@ -3,7 +3,7 @@
 데이터를 JSON으로 인라인 삽입하고 순수 SVG로 그린다.
 
 패널 구성 (종목당 4단)
-  1) 주봉 캔들 + 볼린저 밴드
+  1) 주봉 캔들 + 볼린저 밴드 + 확정 매수/매도 구간 배경 음영 (2026-09~)
   2) PPO / 시그널 / 히스토그램     (금리는 MACD, 단위 %p)
   3) RSI + 히스테리시스 밴드 (상/하한은 config.yaml의 rsi_upper/rsi_lower, 가변)
   4) BB width + 경고 마커 (최근 N주 분포 내 백분위 기준, 2026-09~)
@@ -11,12 +11,13 @@
 import json
 import numpy as np
 import pandas as pd
+from .engine import run_signals
 
 TPL = """<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>주봉 모니터 __DATE__</title><style>
 :root{--bg:#0f1115;--fg:#e6e8eb;--dim:#8b929e;--grid:#232833;--up:#e2453c;--dn:#2f6fd0;
---l1:#f0b429;--l2:#7c8cf8;--warn:#ff6b6b;--ok:#4cd97b}
+--l1:#f0b429;--l2:#7c8cf8;--warn:#ff6b6b;--ok:#4cd97b;--zbuy:#3ddc84;--zsell:#f5a623}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
 font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",sans-serif}
 header{padding:16px;border-bottom:1px solid var(--grid);position:sticky;top:0;background:var(--bg);z-index:9}
@@ -41,6 +42,20 @@ border-top:1px solid var(--grid)}
 /* 모바일에서 요약 테이블 오른쪽 컬럼(기울기~종가)이 카드 overflow:hidden 에
    잘려 아예 안 보이던 문제 — 테이블만 따로 가로 스크롤 가능한 래퍼로 감싼다. */
 .twrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* 캔들 패널 아래 구간 확대(줌) 슬라이더 — 순수 CSS 듀얼 레인지 트릭.
+   input 자체는 pointer-events:none 으로 뚫어놓고 썸(thumb)만 auto 로 살려서
+   두 슬라이더가 겹쳐 있어도 각자의 손잡이만 잡아 끌 수 있게 한다. */
+.zoomwrap{padding:2px 12px 10px}
+.zlbl{font-size:10px;color:var(--dim);text-align:center;margin-bottom:4px}
+.zsliders{position:relative;height:18px}
+.zsliders input[type=range]{position:absolute;left:0;top:0;width:100%;margin:0;
+-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none}
+.zsliders input[type=range]::-webkit-slider-runnable-track{height:4px;background:var(--grid);border-radius:2px}
+.zsliders input[type=range]::-moz-range-track{height:4px;background:var(--grid);border-radius:2px}
+.zsliders input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;
+border-radius:50%;background:var(--fg);border:2px solid var(--bg);margin-top:-5px;pointer-events:auto;cursor:pointer}
+.zsliders input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--fg);
+border:2px solid var(--bg);pointer-events:auto;cursor:pointer}
 </style></head><body>
 <header><h1>주봉 신호 모니터</h1><div class="sub">기준일 __DATE__ · PPO(__F__,__S__,__G__) · RSI(__R__) 존 __RL__/__RU__ · AND 대칭</div></header>
 <div id="nav"></div><div id="root"></div>
@@ -92,30 +107,70 @@ function axis(lo,hi,y0,y1,n=3){let s='';for(let i=0;i<=n;i++){const v=lo+(hi-lo)
 function ext(a){const v=a.filter(x=>x!=null&&isFinite(x));if(!v.length)return[0,1];
  let lo=Math.min(...v),hi=Math.max(...v);const p=(hi-lo)*0.08||1;return[lo-p,hi+p];}
 
-// x축(연/월) 눈금 — 월이 바뀌는 지점을 찾은 뒤 라벨이 안 겹치게 적당히 솎아낸다.
-function monthTicks(t, maxLabels=9){
+// x축(연/월) 눈금 — 6개월(1월/7월) 간격으로만 표시한다(2026-09~, 기존엔 라벨이
+// 안 겹치게 최대 9개로 적당히 솎아내는 방식이었는데 간격이 들쭉날쭉했음).
+function sixMonthTicks(t){
   const idx=[];
   for(let i=0;i<t.length;i++){
-    const ym=t[i].slice(0,7);           // "YYYY-MM"
-    if(i===0||ym!==t[i-1].slice(0,7)) idx.push(i);
+    const ym=t[i].slice(0,7);                       // "YYYY-MM"
+    if(i>0 && ym===t[i-1].slice(0,7)) continue;      // 같은 달 중복 제거
+    const mm=+ym.slice(5,7);
+    if(mm===1||mm===7) idx.push(i);
   }
-  if(idx.length<=maxLabels) return idx;
-  const step=Math.ceil(idx.length/maxLabels);
-  return idx.filter((_,k)=>k%step===0);
+  return idx;
 }
 
 // body 는 이미 절대 y 좌표로 그려지므로 transform 을 쓰면 이중 오프셋이 된다.
 function panel(s,H,body,label){
  return `<text x="4" y="${s+10}" fill="var(--dim)" font-size="9">${label}</text>${body}`;}
 
-function chart(r){
-  const d=r.series,n=d.t.length,x=i=>PAD+(W-PAD-8)*(n<2?0.5:i/(n-1)),bw=Math.max(1.2,(W-PAD-8)/n*0.6);
+// ixLo/ixHi: r.series 전체 중 실제로 그릴 구간의 인덱스 범위(포함) — 하단 확대
+// 슬라이더가 이 범위를 좁히면 x축 간격과 y축 스케일(ext())이 그 구간 값만
+// 기준으로 다시 계산되어 자동으로 확대/재조정된다. 기본은 전체 범위(0~n-1).
+function chartSVG(r, ixLo, ixHi){
+  const s0=r.series, sl=a=>a.slice(ixLo,ixHi+1);
+  const d={t:sl(s0.t),o:sl(s0.o),h:sl(s0.h),l:sl(s0.l),c:sl(s0.c),
+    bu:sl(s0.bu),bm:sl(s0.bm),bl:sl(s0.bl),ol:sl(s0.ol),os:sl(s0.os),oh:sl(s0.oh),
+    r:sl(s0.r),w:sl(s0.w),wp:sl(s0.wp),cf:s0.cf?sl(s0.cf):null};
+  const n=d.t.length,x=i=>PAD+(W-PAD-8)*(n<2?0.5:i/(n-1)),bw=Math.max(1.2,(W-PAD-8)/n*0.6);
   const H1=190,H2=95,H3=80,H4=70,G=16;let y=0,out='';
   const TOP=20;   // 패널 제목(y+10)과 y축 맨 위 눈금값이 너무 붙어 보여 여유를 더 둠(기존 14)
 
-  // 1) 캔들 + BB
+  // 1) 캔들 + BB (+ 확정 매수/매도 구간 배경 음영, 2026-09~)
+  // d.cf[i] = 그 주 시점의 confirmed(마지막 확정 방향). run_signals 순차 재실행으로
+  // 얻은 이력이라 라이브 판정(state.json 이어가기)과 동일하게 재현된다 —
+  // core/chart.py의 _confirmed_series 참고. 워밍업 이전 구간은 null(무색).
+  // 음영색은 캔들(빨강=상승봉/파랑=하락봉)과 겹쳐 헷갈리지 않도록 별도 배색
+  // (초록=매수, 주황=매도, --zbuy/--zsell)을 쓰고, 처음엔 opacity 0.10으로 너무
+  // 옅어 안 보인다는 제보(2026-09)가 있어 0.24로 올림. 배경(bg)은 제목·범례·축·
+  // 캔들 등 다른 모든 요소보다 먼저(=맨 뒤에) 그려서 확실히 뒤에 깔리게 한다
+  // (2026-09 제보 — 그래야 캔들이 항상 배경 위에서 또렷하게 보인다).
+  // 금리(kind=rate) 자산은 방향 라벨을 매수/매도 대신 상승/하락으로 쓰므로
+  // (요약표 lblOf/RM과 동일 관례) 범례 텍스트도 맞춰서 바꾼다.
   const [lo,hi]=ext([...d.h,...d.l,...d.bu,...d.bl]);
-  let s=axis(lo,hi,y+TOP,y+H1);
+  const slot=(W-PAD-8)/n;
+  const zLbl=r.kind==='rate'?{buy:'상승구간',sell:'하락구간'}:{buy:'매수구간',sell:'매도구간'};
+  let bg='';
+  if(d.cf){
+    let j=0;
+    while(j<n){
+      const v=d.cf[j];
+      if(v==null){j++;continue;}
+      let k=j;while(k+1<n&&d.cf[k+1]===v)k++;
+      const col=v==='매수'?'var(--zbuy)':(v==='매도'?'var(--zsell)':null);
+      // 배경 상단을 패널 맨 위(y)가 아니라 TOP만큼 내려서 시작 — 그 위 제목("주봉 +
+      // 볼린저...")과 매수/매도구간 범례 글자를 음영이 가리던 문제(2026-09 제보) 수정.
+      if(col) bg+=`<rect x="${x(j)-slot/2}" y="${y+TOP}" width="${x(k)-x(j)+slot}" height="${H1-TOP}" fill="${col}" opacity="0.24"/>`;
+      j=k+1;
+    }
+  }
+  let s=bg;   // ← 배경이 항상 이 패널의 첫 번째(=맨 뒤) 요소가 된다.
+  s+=`<text x="4" y="${y+10}" fill="var(--dim)" font-size="9">주봉 + 볼린저(${D.p.bb_period},${D.p.bb_std})</text>`;
+  s+=`<rect x="${W-124}" y="${y+3}" width="7" height="7" fill="var(--zbuy)" opacity="0.9"/>`
+   +`<text x="${W-113}" y="${y+10}" fill="var(--dim)" font-size="9">${zLbl.buy}</text>`
+   +`<rect x="${W-60}" y="${y+3}" width="7" height="7" fill="var(--zsell)" opacity="0.9"/>`
+   +`<text x="${W-49}" y="${y+10}" fill="var(--dim)" font-size="9">${zLbl.sell}</text>`;
+  s+=axis(lo,hi,y+TOP,y+H1);
   for(let i=0;i<n;i++){if(d.bu[i]==null)continue;
     s+=`<circle cx="${x(i)}" cy="${sc(d.bu[i],lo,hi,y+TOP,y+H1)}" r="0.7" fill="var(--dim)"/>`
       +`<circle cx="${x(i)}" cy="${sc(d.bl[i],lo,hi,y+TOP,y+H1)}" r="0.7" fill="var(--dim)"/>`
@@ -125,7 +180,7 @@ function chart(r){
     const yo=sc(d.o[i],lo,hi,y+TOP,y+H1),yc=sc(d.c[i],lo,hi,y+TOP,y+H1);
     s+=`<line x1="${x(i)}" y1="${yh}" x2="${x(i)}" y2="${yl}" stroke="${col}" stroke-width="0.8"/>`
       +`<rect x="${x(i)-bw/2}" y="${Math.min(yo,yc)}" width="${bw}" height="${Math.max(1,Math.abs(yc-yo))}" fill="${col}"/>`;}
-  out+=panel(y,H1,s,'주봉 + 볼린저('+D.p.bb_period+','+D.p.bb_std+')');y+=H1+G;
+  out+=s;y+=H1+G;
 
   // 2) PPO / MACD
   const [l2,h2]=ext([...d.ol,...d.os,...d.oh]);
@@ -165,21 +220,53 @@ function chart(r){
    +`⚠ 최근 ${D.p.bb_width_window_weeks}주 상위 ${100-D.p.bb_width_warn_percentile}%</text>`;
   out+=panel(y,H4,s,'BB width'+(r.kind==='rate'?' (bp)':''));y+=H4+10;
 
-  // x축 연/월 라벨 — 4개 패널을 관통하는 점선 눈금 + 맨 아래 "YY.MM" 텍스트
-  const chartBottom=y;
-  for(const i of monthTicks(d.t)){
-    const xx=x(i);
-    out+=`<line x1="${xx}" y1="0" x2="${xx}" y2="${chartBottom}" stroke="var(--grid)" stroke-dasharray="1,3" opacity="0.5"/>`
-      +`<text x="${xx}" y="${chartBottom+11}" fill="var(--dim)" font-size="9" text-anchor="middle">${d.t[i].slice(2,7).replace('-','.')}</text>`;
+  // x축 연/월 라벨 — 6개월(1월/7월) 간격 텍스트만 표시한다. 이전엔 4개 패널을
+  // 관통하는 점선 세로 눈금도 같이 그렸는데, 캔들/음영 위로 선이 겹쳐 번잡하다는
+  // 제보(2026-09)로 세로선은 없애고 텍스트 라벨만 남김.
+  for(const i of sixMonthTicks(d.t)){
+    out+=`<text x="${x(i)}" y="${y+11}" fill="var(--dim)" font-size="9" text-anchor="middle">${d.t[i].slice(2,7).replace('-','.')}</text>`;
   }
   y+=16;
 
+  return `<svg viewBox="0 0 ${W} ${y}">${out}</svg>`;
+}
+
+// 캔들 패널 아래 구간 확대 슬라이더 — 좌/우 손잡이 사이 구간만 chartSVG로
+// 다시 그린다(같은 함수가 y축 범위를 그 구간 값만으로 재계산하므로 자동 확대/
+// 축소가 됨). 최소 구간(minSpan)은 너무 좁혀서 축이 무의미해지는 것을 막는다.
+function chart(r){
+  const n0=r.series.t.length;
   const lbl=lblOf(r), cls=lblCls(r.direction);
   return `<div class="card" id="c_${r.id}"><div class="hd"><b>${esc(r.name)}</b>`
    +`<span class="${cls}">${lbl}</span></div>`
-   +`<svg viewBox="0 0 ${W} ${y}">${out}</svg>`
-   +`<div class="rsn">${esc(r.reason)}  ·  ${d.t[0]} ~ ${d.t[n-1]}  ·  ${n}주</div></div>`;
+   +`<div class="svgholder" id="sv_${r.id}">${chartSVG(r,0,n0-1)}</div>`
+   +`<div class="zoomwrap"><div class="zlbl" id="zl_${r.id}">${r.series.t[0]} ~ ${r.series.t[n0-1]} (전체 ${n0}주 · 드래그로 확대)</div>`
+   +`<div class="zsliders">`
+   +`<input type="range" class="zl" data-id="${r.id}" min="0" max="${n0-1}" step="1" value="0">`
+   +`<input type="range" class="zr" data-id="${r.id}" min="0" max="${n0-1}" step="1" value="${n0-1}">`
+   +`</div></div>`
+   +`<div class="rsn" id="rs_${r.id}">${esc(r.reason)}  ·  ${r.series.t[0]} ~ ${r.series.t[n0-1]}  ·  ${n0}주</div></div>`;
 }
+
+// 슬라이더는 카드마다 새로 만들어지므로(탭 전환 시 #root 통째로 다시 렌더링)
+// 개별 리스너 대신 #root 에 한 번만 위임 리스너를 걸어둔다.
+R.addEventListener('input', e=>{
+  const t=e.target;
+  if(!(t.classList.contains('zl')||t.classList.contains('zr'))) return;
+  const id=t.dataset.id, row=D.rows[id];
+  const wrap=t.closest('.zsliders');
+  const zl=wrap.querySelector('.zl'), zr=wrap.querySelector('.zr');
+  let a=+zl.value,b=+zr.value;
+  if(a>b){const tmp=a;a=b;b=tmp;}
+  const n0=row.series.t.length,minSpan=Math.min(8,n0-1);
+  if(b-a<minSpan){
+    if(t===zl) a=Math.max(0,b-minSpan); else b=Math.min(n0-1,a+minSpan);
+    zl.value=a;zr.value=b;
+  }
+  document.getElementById('sv_'+id).innerHTML=chartSVG(row,a,b);
+  document.getElementById('zl_'+id).textContent=`${row.series.t[a]} ~ ${row.series.t[b]} (전체 ${n0}주 · 드래그로 확대)`;
+  document.getElementById('rs_'+id).textContent=`${row.reason}  ·  ${row.series.t[a]} ~ ${row.series.t[b]}  ·  ${b-a+1}주`;
+});
 
 function render(g){
   R.innerHTML=summary(g)+D.rows.filter(r=>g==='전체'||r.group===g).map(chart).join('');
@@ -195,10 +282,25 @@ def _ser(s, nd=6):
     return [None if (v is None or not np.isfinite(v)) else round(float(v), nd) for v in s]
 
 
+def _confirmed_history(df, params, meta):
+    """
+    자산의 전체 주봉 히스토리에 run_signals(core/engine.py, 백테스트 순차 재실행)를
+    돌려 매주 confirmed(마지막 확정 매수/매도) 이력을 구한다. generate_signal은
+    순수 함수이고 run_signals는 매주 df.iloc[:i+1]만 순차로 넘기므로, 이 결과는
+    run_weekly.py가 state.json으로 이어가는 라이브 판정과 동일하게 재현된다
+    (콜드스타트 로직이 이미 이 성질에 기대고 있음, run_weekly.py 참고).
+    워밍업(slow+signal 주) 이전 구간은 결과에 없어 조회 시 None이 된다.
+    """
+    hist = run_signals(df, params, meta)
+    return hist["confirmed"] if not hist.empty else pd.Series(dtype=object)
+
+
 def build_html(payload: list, params: dict, asof: str, tail: int = 260) -> str:
     rows = []
     for i, (e, df, dec) in enumerate(payload):
         d = df.tail(tail)
+        conf_hist = _confirmed_history(df, params, {"kind": e["kind"], **e})
+        cf = [conf_hist.get(ts) for ts in d.index]
         rows.append({
             "id": i, "name": e["name"], "group": e["group"], "kind": e["kind"],
             "direction": dec["direction"], "confirmed": dec["confirmed"],
@@ -215,6 +317,7 @@ def build_html(payload: list, params: dict, asof: str, tail: int = 260) -> str:
                 "bu": _ser(d["bb_upper"]), "bm": _ser(d["bb_mid"]), "bl": _ser(d["bb_lower"]),
                 "ol": _ser(d["osc_line"]), "os": _ser(d["osc_signal"]), "oh": _ser(d["osc_hist"]),
                 "r": _ser(d["rsi"]), "w": _ser(d["bb_width"]), "wp": _ser(d["bb_width_pctile"]),
+                "cf": cf,
             },
         })
     data = json.dumps({"rows": rows, "p": params}, ensure_ascii=False)

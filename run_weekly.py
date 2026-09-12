@@ -5,7 +5,7 @@
   3) state.json 이월
   4) 텔레그램 발송 + docs/index.html 생성
 """
-import os, sys, json, unicodedata, datetime as dt
+import os, sys, json, datetime as dt
 import yaml
 from dotenv import load_dotenv
 
@@ -26,41 +26,16 @@ from core.chart import build_html
 STATE = "state.json"
 OUT = "docs/index.html"
 
-# 텔레그램 <pre>(고정폭 글꼴) 메시지의 컬럼이 안 맞는 문제 수정용(2026-09).
-# 한글(및 기타 동아시아 문자)은 고정폭 글꼴에서 폭 2로 그려지는데, 파이썬의
-# f"{s:<12}" 같은 정렬은 "문자 개수" 기준이라 한글 비중이 다른 두 문자열을
-# 나란히 두면 화면상 폭이 서로 달라져 줄이 어긋난다. unicodedata의
-# East Asian Width 속성(W/F = 폭 2, 그 외 = 폭 1)으로 "화면상 폭"을 직접
-# 계산해서 자르고/채운다(_vpad/_vtrunc). NAME_W=14, LABEL_W=15는 현재
-# config.yaml의 종목명·상태라벨 중 가장 넓은 것("마이크로소프트"/
-# "버크셔해서웨이"=14, "중립(직전 매수)" 류=15) 기준이며, 나중에 이보다 긴
-# 이름이 추가되면 잘려서 표시된다(줄 자체는 안 깨짐).
-#
-# 화면폭 기준으로 맞춰도 종목명+상태+RSI+OSC를 한 줄에 다 넣으면 모바일
-# 화면 폭 자체를 넘어서서 중간에 줄바꿈이 일어나 오히려 더 지저분해진다
-# (2026-09 제보) — 그래서 아래 main()에서 종목당 2줄(이름+상태 / RSI+OSC)로
-# 나눠 각 줄 길이를 줄인다.
-NAME_W, LABEL_W = 14, 15
-
-
-def _vwidth(ch: str) -> int:
-    return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-
-
-def _vtrunc(s: str, width: int) -> str:
-    out, w = "", 0
-    for ch in s:
-        cw = _vwidth(ch)
-        if w + cw > width:
-            break
-        out += ch
-        w += cw
-    return out
-
-
-def _vpad(s: str, width: int) -> str:
-    s = _vtrunc(s, width)
-    return s + " " * max(0, width - sum(_vwidth(c) for c in s))
+# 텔레그램 메시지 포맷(2026-09~): 종목마다 구분선+종목명+상세, 3줄짜리 "박스"로 표시한다.
+#   ======================
+#   메타
+#   : 매수 / OSC -1.294 / RSI 23.2
+# 이전엔 종목명·상태·RSI·OSC를 한 줄(또는 들여쓴 2줄)에 몰아넣고 동아시아 문자폭
+# (한글=2, 영문/숫자=1)까지 보정해가며 여러 종목의 컬럼을 맞추려 했는데, 그래도
+# 모바일 폭을 넘기면 중간에 강제 줄바꿈이 나 정렬이 깨졌다(2026-09 제보 다수).
+# 종목마다 줄 자체를 통째로 분리하는 이 포맷에서는 애초에 "여러 종목이 세로로
+# 정렬돼야 한다"는 제약이 없어져 그런 폭 보정이 더 이상 필요 없다.
+SEP = "=" * 22
 
 
 def main(cfg_path="config.yaml", no_cache=True):
@@ -68,7 +43,7 @@ def main(cfg_path="config.yaml", no_cache=True):
     p = dict(cfg["params"])
     states = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
 
-    payload, lines, errs = [], [], []
+    payload, lines, changed_lines, errs = [], [], [], []
     for e in cfg["universe"]:
         try:
             wk = D.load(e, cfg, use_cache=not no_cache)
@@ -96,29 +71,19 @@ def main(cfg_path="config.yaml", no_cache=True):
                 lbl = f"중립(직전 {c})"
             mark = "◆" if dec["changed"] else ("·" if dec["neutral_edge"] else " ")
             fmt = lambda v, d=2: f"{v:.{d}f}" if v is not None else "—"
-            # OSC 컬럼: 예전엔 osc_line(PPO/MACD 원값)을 보여줬는데, 실제 매수/매도
-            # 판정에 쓰이는 값은 히스토그램(osc_hist, hist_upper/lower와 비교되는 값)이라
-            # 서로 다른 숫자였다(예: osc_line 3.658 vs 판정에 쓰인 osc_hist 0.190).
-            # RSI처럼 "판정에 실제로 쓰인 값"을 그대로 보여주도록 osc_hist로 교체.
-            #
-            # 1줄에 종목명+상태+RSI+OSC를 다 넣으면(문자폭 기준으로 정렬해도) 모바일
-            # 화면 폭을 넘어서서 중간에 줄바꿈이 일어나 정렬이 오히려 더 깨졌다(2026-09
-            # 제보). 종목명+상태를 1번째 줄, OSC/RSI를 들여쓴 2번째 줄로 나눠 각 줄
-            # 길이를 줄인다 — 종목명/상태는 한글 위주라 화면폭 기준 _vpad, OSC/RSI는
-            # 숫자·기호뿐이라(ASCII는 폭이 항상 1이라 문자 개수 정렬로 충분) 그냥
-            # :>width로 정렬한다. 2번째 줄 들여쓰기는 1번째 줄 라벨이 시작하는 칸
-            # (마크 1 + 종목명 NAME_W + 공백 1)에 맞춰서 상세줄이 라벨 아래에
-            # 매달린 것처럼 보이게 한다 — 너무 깊게 들여쓰면 모바일에서 다시
-            # 줄바꿈이 날 수 있어(2026-09 교훈) 이 정도(16칸)로 제한.
+            # OSC: 예전엔 osc_line(PPO/MACD 원값)을 보여줬는데, 실제 매수/매도 판정에
+            # 쓰이는 값은 히스토그램(osc_hist, hist_upper/lower와 비교되는 값)이라 서로
+            # 다른 숫자였다(예: osc_line 3.658 vs 판정에 쓰인 osc_hist 0.190). RSI처럼
+            # "판정에 실제로 쓰인 값"을 그대로 보여주도록 osc_hist를 쓴다.
             #
             # BB width 변동성 경고(⚠)는 텔레그램 메시지에서는 뺐다(2026-09, 사용자
             # 요청 — 정보가 늘어나 복잡해짐). 대시보드 차트의 BB width 패널에는
             # 계속 표시되므로 정보 자체가 없어지는 건 아니다.
-            DETAIL_INDENT = " " * (1 + NAME_W + 1)
-            name_line = f"{mark}{_vpad(e['name'], NAME_W)} {_vtrunc(lbl, LABEL_W)}"
-            detail_line = (f"{DETAIL_INDENT}OSC {fmt(dec['osc_hist'],3):>7} "
-                           f"/ RSI {fmt(dec['rsi'],1):>5}")
-            lines.append(name_line + "\n" + detail_line)
+            block = (f"{SEP}\n{mark}{e['name']}\n"
+                     f": {lbl} / OSC {fmt(dec['osc_hist'],3)} / RSI {fmt(dec['rsi'],1)}")
+            lines.append(block)
+            if dec["changed"]:
+                changed_lines.append(block)
         except Exception as ex:
             errs.append(f"{e['name']}: {ex}")
 
@@ -147,11 +112,13 @@ def main(cfg_path="config.yaml", no_cache=True):
     os.makedirs("docs", exist_ok=True)
     open(OUT, "w", encoding="utf-8").write(build_html(payload, p, asof))
 
-    changed = [l for l in lines if l.startswith("◆")]
     msg = f"<b>주봉 신호 {asof}</b>\n"
-    msg += (f"\n<b>전환 {len(changed)}건</b>\n<pre>" + "\n".join(changed) + "</pre>\n"
-            if changed else "\n전환 없음\n")
-    msg += "\n<pre>" + "\n".join(lines) + "</pre>"
+    if changed_lines:
+        msg += (f"\n<b>전환 {len(changed_lines)}건</b>\n<pre>"
+                + "\n".join(changed_lines) + "\n" + SEP + "</pre>\n")
+    else:
+        msg += "\n전환 없음\n"
+    msg += "\n<pre>" + "\n".join(lines) + "\n" + SEP + "</pre>"
     if errs:
         msg += "\n<b>오류</b>\n<pre>" + "\n".join(errs) + "</pre>"
 
