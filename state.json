@@ -84,10 +84,10 @@
   "last_date": "2026-09-18"
  },
  "BZ=F": {
-  "osc_zone": "bear",
+  "osc_zone": "bull",
   "rsi_zone": "bull",
-  "direction": "중립",
-  "confirmed": "매도",
+  "direction": "매수",
+  "confirmed": "매수",
   "last_date": "2026-09-18"
  },
  "^TNX": {
