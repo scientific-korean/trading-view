@@ -70,12 +70,28 @@ def fetch_ecos_kr10y(start: str, stat: str, item: str) -> pd.DataFrame:
 
 
 def fetch_mof_jp10y(start: str) -> pd.DataFrame:
-    """일본 재무성 국채금리 CSV (연도별 파일 병합)."""
+    """
+    일본 재무성 국채금리 CSV.
+
+    jgbcm_all.csv(과거 전체)는 매월 초에 "전월 말까지"만 갱신되고, 이번 달 일별
+    데이터는 별도 파일 jgbcm.csv에만 있다. 예전엔 _all 하나만 받아서 매달 초~말
+    사이 JP10Y가 전월 말 값에 몇 주씩 멈춰 있었다(2026-10 확인: state.json의
+    last_date가 9/04 → 10/02로 한 달 단위로만 움직임). 두 파일을 합쳐서 쓴다.
+    """
     import io, requests
-    base = "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"
-    txt = requests.get(base, timeout=60).content.decode("shift_jis", errors="ignore")
-    df = pd.read_csv(io.StringIO(txt), skiprows=1)
-    df = df.rename(columns={df.columns[0]: "wareki"})
+    urls = ["https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv",
+            "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv"]
+    parts = []
+    for i, u in enumerate(urls):
+        try:
+            txt = requests.get(u, timeout=60).content.decode("shift_jis", errors="ignore")
+            part = pd.read_csv(io.StringIO(txt), skiprows=1)
+            parts.append(part.rename(columns={part.columns[0]: "wareki"}))
+        except Exception as ex:
+            if i == 0:
+                raise                      # 과거 전체 파일은 필수
+            print(f"[경고] JP10Y 이번 달 파일(jgbcm.csv) 수신 실패 — 전월 말까지만 사용: {ex}")
+    df = pd.concat(parts, ignore_index=True)
 
     def to_dt(s):                       # 令和6.4.1 형태 → 서기
         # 실제 CSV는 간지 표기(明治/大正/...)가 아니라 로마자 약자(M/T/S/H/R)를
@@ -91,6 +107,7 @@ def fetch_mof_jp10y(start: str) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["wareki"].map(to_dt))
     df["close"] = pd.to_numeric(df["10年"], errors="coerce")
     df = df.dropna(subset=["date", "close"]).set_index("date")[["close"]]
+    df = df[~df.index.duplicated(keep="last")].sort_index()   # 두 파일 겹치는 날짜 정리
     df = df[df.index >= start]
     for c in ("open", "high", "low"):
         df[c] = df["close"]

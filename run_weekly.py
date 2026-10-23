@@ -5,7 +5,7 @@
   3) state.json 이월
   4) 텔레그램 발송 + docs/index.html 생성
 """
-import os, sys, json, datetime as dt
+import os, sys, json, hashlib, datetime as dt
 import yaml
 from dotenv import load_dotenv
 
@@ -37,18 +37,36 @@ OUT = "docs/index.html"
 # 정렬돼야 한다"는 제약이 없어져 그런 폭 보정이 더 이상 필요 없다.
 SEP = "=" * 22
 
+# state.json(히스테리시스 상태: osc_zone/rsi_zone/confirmed)에 영향을 주는 신호 파라미터.
+# 이 값이 바뀌면 저장된 상태는 옛 파라미터로 계산된 것이라 더 이상 맞지 않는다 —
+# 2026-10 확인: RSI 밴드를 55/45→52/48로 바꾼 뒤에도 state.json을 그대로 이어 써서,
+# 알파벳은 새 기준으론 2026-07-24에 매도로 확정 전환됐는데 계속 "직전 매수"로 남아
+# 있었다(옛 상태와 비교하니 전환도 영영 안 잡힘). 파라미터 지문(psig)을 state에 같이
+# 저장하고, 지문이 다르면(또는 지문 도입 전 state면) 콜드스타트로 다시 계산한다.
+SIG_KEYS = ("fast", "slow", "signal", "rsi_period", "rsi_upper", "rsi_lower",
+            "hist_upper", "hist_lower")
+
+
+def _psig(p: dict) -> str:
+    blob = json.dumps({k: p.get(k) for k in SIG_KEYS}, sort_keys=True)
+    return hashlib.sha1(blob.encode()).hexdigest()[:10]
+
 
 def main(cfg_path="config.yaml", no_cache=True):
     cfg = yaml.safe_load(open(cfg_path, encoding="utf-8"))
     p = dict(cfg["params"])
     states = json.load(open(STATE, encoding="utf-8")) if os.path.exists(STATE) else {}
 
-    payload, lines, changed_lines, errs = [], [], [], []
+    payload, lines, changed_lines, errs, resets = [], [], [], [], []
+    psig = _psig(p)
     for e in cfg["universe"]:
         try:
             wk = D.load(e, cfg, use_cache=not no_cache)
             df = enrich(wk, p, e["kind"])
             prev = states.get(e["ticker"])
+            old = None
+            if prev and prev.get("psig") != psig:
+                old, prev = prev, None     # 파라미터 변경(또는 지문 없는 옛 state) → 재계산
 
             if not prev:
                 # 콜드스타트: 직전 봉까지 히스토리를 순차 재생해 state 복원.
@@ -58,7 +76,13 @@ def main(cfg_path="config.yaml", no_cache=True):
                                       return_state=True)
 
             dec, st = generate_signal(df, prev, p, {"kind": e["kind"], **e})
+            st["psig"] = psig
             states[e["ticker"]] = st
+            if old and old.get("confirmed") != st.get("confirmed"):
+                rn = lambda x: ({"매수": "상승", "매도": "하락"}.get(x, x)
+                                if e["kind"] == "rate" else x) or "없음"
+                resets.append(f"{e['name']}: 직전 확정 {rn(old.get('confirmed'))}"
+                              f" → {rn(st.get('confirmed'))}")
             payload.append((e, df, dec))
 
             lbl = dec["direction"]
@@ -96,6 +120,14 @@ def main(cfg_path="config.yaml", no_cache=True):
     else:
         asof = str(dt.date.today())
 
+    # 데이터가 멈춘 종목(마지막 주봉이 기준일보다 이전)은 지난 값으로 판정된 것이라
+    # 텔레그램에도 표시한다. 예전엔 콘솔 경고만 찍혀서, JP10Y가 몇 주씩 옛 값에
+    # 멈춰 있어도 메시지만 봐서는 알 수 없었다(2026-10 확인).
+    for e_, df_, _ in payload:
+        last = df_.index[-1].date().isoformat()
+        if last < asof:
+            errs.append(f"{e_['name']}: 데이터 지연 — 마지막 주봉 {last} (기준일 {asof})")
+
     # config.yaml에서 완전히 빠진 티커의 옛 state는 정리한다(2026-09: ^KS200→^KS11
     # 교체 후에도 "^KS200" 항목이 state.json에 계속 남아있던 문제). 이번 실행에서
     # 일시적으로 fetch가 실패한 티커(여전히 유니버스엔 있음)는 여기 안 걸리므로
@@ -118,6 +150,9 @@ def main(cfg_path="config.yaml", no_cache=True):
                 + "\n".join(changed_lines) + "\n" + SEP + "</pre>\n")
     else:
         msg += "\n전환 없음\n"
+    if resets:
+        msg += ("\n<b>상태 재계산</b> (신호 파라미터 변경 반영)\n<pre>"
+                + "\n".join(resets) + "</pre>\n")
     msg += "\n<pre>" + "\n".join(lines) + "\n" + SEP + "</pre>"
     if errs:
         msg += "\n<b>오류</b>\n<pre>" + "\n".join(errs) + "</pre>"
